@@ -1,0 +1,73 @@
+use schema ;
+
+-- Task 1
+ 
+insert into dim_yearweek
+select distinct (yearofweek("Created_Date") * 100 + weekiso("Created_Date")) as yearweek
+from nyc311."SERVICE_REQUEST_ALL"
+where "Created_Date" >
+    (select min("Created_Date")
+    from nyc311.service_request_all
+    where "Unique_Key" not in (select "Unique_Key" from nyc311.service_request))
+order by yearweek;
+
+-- Task 2
+
+insert into FACT_SERVICE_QUALITY (agency_id, location_zip, type_id, yearweek, count, total, avg, min, max)
+select 
+    dim_agency.agency_id 
+    , dim_location.location_zip 
+    , dim_request_type.type_id
+    , (yearofweek("Created_Date") * 100 + weekiso("Created_Date")) as yearweek
+    , count(*)
+    , sum(timestampdiff(hour, "Created_Date", "Closed_Date"))
+    , avg(timestampdiff(hour, "Created_Date", "Closed_Date"))
+    , min(timestampdiff(hour, "Created_Date", "Closed_Date"))
+    , max(timestampdiff(hour, "Created_Date", "Closed_Date"))
+from nyc311.service_request_all
+inner join dim_agency dim_agency on nyc311.service_request_all."Agency" = dim_agency.agency_name
+inner join dim_location dim_location on nyc311.service_request_all."Incident_Zip" = dim_location.location_zip
+inner join dim_request_type dim_request_type on nyc311.service_request_all."Complaint_Type" = dim_request_type.type_name
+where "Created_Date" > 
+    (select min("Created_Date")
+    from nyc311.service_request_all
+    where "Unique_Key" not in (select "Unique_Key" from nyc311.service_request))
+group by dim_agency.agency_id, dim_location.location_zip, dim_request_type.type_id, yearweek;
+
+-- Task 3a
+
+select agency_name, round(sum(avg)/sum(count), 2)  as Average
+from fact_service_quality
+join dim_agency
+using (agency_id)
+group by agency_name
+order by Average DESC;
+
+-- Task 3b
+
+select "Borough", round(sum(avg)/sum(count), 2)  as avg
+from fact_service_quality as f
+join nyc311.zip_code_nyc_borough as z 
+on f.location_zip = z."Zip" 
+group by "Borough";
+
+-- Task 3c
+
+select monthname(dateadd('week', substr(yearweek, 5, 2), to_date(substr(yearweek, 0, 4), 'YYYY'))) as month, sum(count) as Total
+from fact_service_quality
+group by month
+order by month(TO_DATE(month, 'MMMM'));
+
+-- Task 4: Dashboard style query from task 3c. Unfortinately I didn't quite get the numbers the same
+
+with allrequests
+as
+    (select "Created_Date", "Incident_Zip", "Complaint_Type"
+    from nyc311.service_request_all
+    inner join nyc311.zip_code_nyc_borough on nyc311.service_request_all."Incident_Zip" = nyc311.zip_code_nyc_borough."Zip"
+    inner join NYC311.REF_SR_TYPE_NYC311_OPEN_DATA_26 on nyc311.service_request_all."Complaint_Type" = NYC311.REF_SR_TYPE_NYC311_OPEN_DATA_26."Type")
+select distinct monthname("Created_Date") as month, count(*) as Total
+from allrequests
+group by month
+order by month(TO_DATE(month, 'MMMM'));
+
